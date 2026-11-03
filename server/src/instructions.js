@@ -149,7 +149,11 @@ BROWSER
 - Uploading: click the site's upload button (opens a chooser), then browser_file_upload with the full
   path. Open the chooser once; if one is left open, call browser_file_upload with no paths.
 - Logins: browser_login with the site's sign-in page. Chrome fills a saved password, or the window
-  comes up and waits while they sign in. The login is remembered after that. Anything only they
+  comes up and waits while they sign in. The login is remembered after that. A site they use with
+  Google: provider "google" (account = the Gmail from memory if they have several); it presses
+  Sign in with Google, picks the account and Continue. If Google asks to give the site MORE (Gmail,
+  Drive, contacts), show them what it asks and only after their yes call again with approved_access.
+  Their password and 2FA stay theirs. Anything only they
   can do on a page (a CAPTCHA, a choice that's theirs): browser_show, ask them, browser_hide after.
 - page-links finds any link (even in closed menus), so you navigate straight there. Files behind a
   login or "save this page as PDF": browser-save. Printing: print (any printer, no dialog).

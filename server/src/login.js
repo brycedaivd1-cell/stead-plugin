@@ -12,6 +12,7 @@
 import { show, hide } from './window.js';
 import { CALL_BUDGET_MS, connect, targetIdOf, pageById, where, handoffTool, AWAY, claudesTab } from './handoff.js';
 import { judge } from './approve.js';
+import { signInWithGoogle, walkGoogle, findGoogleButton, onGoogle } from './google-sso.js';
 
 const PASSWORD = 'input[type="password"]';
 const OTP = 'input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="code" i][inputmode="numeric"]';
@@ -60,6 +61,7 @@ async function visible(page, sel) {
 // Signed in = no visible password or one-time-code field, and we've left every sign-in page.
 async function signedIn(page, startUrl, requestedUrl) {
   if (page.isClosed()) return false;
+  if (onGoogle(page.url()) || await findGoogleButton(page).catch(() => null)) return false;
   if (await visible(page, PASSWORD)) return false;
   if (await visible(page, OTP)) return false;
   return !stillSigningIn(page.url(), startUrl, requestedUrl, { formVisible: !!(await visible(page, USER)) });
@@ -131,16 +133,19 @@ const STALE = 30 * 60000;
 export function loginTools({ port, dir, ensureChrome, callBrowser }) {
   return [{
     name: 'browser_login',
-    description: 'Sign them in to a website instead of asking for passwords: opens the sign-in page, Chrome fills a saved password (you never see it), else the window comes up while they sign in or do 2FA. "Not signed in yet": call again with the same url to keep waiting.',
+    description: 'Sign them in to a website instead of asking for passwords: opens the sign-in page, Chrome fills a saved password (you never see it), else the window comes up while they sign in or do 2FA. With provider "google" it presses Sign in with Google and picks their account. "Not signed in yet": call again with the same url to keep waiting.',
     inputSchema: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Sign-in page (best) or the site\'s home page' },
         wait_minutes: { type: 'number', description: 'Total, across calls (default 5)' },
+        provider: { type: 'string', enum: ['auto', 'password', 'google'], description: 'google: they sign in to this site with Google (their memory says so, or they told you). auto (default): Google only when the page has no password or email box, just provider buttons' },
+        account: { type: 'string', description: 'With google: the Google account to pick when several are signed in (an email address from their memory)' },
+        approved_access: { type: 'boolean', description: 'With google: true ONLY after they said yes in chat to exactly what Google said the site wants (Gmail, Drive, contacts...). Never on your own' },
       },
       required: ['url'],
     },
-    run: async ({ url: asked, wait_minutes = 5 }) => {
+    run: async ({ url: asked, wait_minutes = 5, provider = 'auto', account, approved_access = false }) => {
       const t0 = Date.now();
       const url = asUrl(asked);
       await ensureChrome();
@@ -172,13 +177,37 @@ export function loginTools({ port, dir, ensureChrome, callBrowser }) {
           // Until a password or code box shows (most sign-in pages: at once), at most 1.5 s.
           await firstOf(1500, page.waitForSelector(`${PASSWORD}, ${OTP}`, { state: 'visible', timeout: 1500 }));
           const start = page.url();
-          if (!(await visible(page, PASSWORD)) && !(await visible(page, OTP)) && !isSignInPage(start, url)) {
+          // Sign in with Google: when asked, or when the page offers nothing but provider buttons.
+          const boxes = (await visible(page, PASSWORD)) || (await visible(page, OTP)) || (await visible(page, USER + ', input[type="email"]'));
+          if (provider === 'google' || (provider === 'auto' && !boxes)) {
+            const g = await signInWithGoogle(page, { account, approved: approved_access });
+            if (g.result === 'no-button' && provider === 'google') {
+              return say(`No "Sign in with Google" button on ${where(start)}. Call again with the site's sign-in page, or with provider "auto". The tab is left open.`);
+            }
+            if (g.result !== 'no-button') {
+              job = { id: await targetIdOf(page), start, since: Date.now(), pm: g.result === 'theirs' ? 'google' : 'google-back', why: g.why, front: g.page && !g.page.isClosed() ? await targetIdOf(g.page).catch(() => null) : null };
+              waiting.set(url, job);
+              if (g.result === 'back') {
+                await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+                let twice = await signedIn(page, start, url);
+                if (twice) { await page.waitForTimeout(2000); twice = await signedIn(page, start, url); }
+                if (twice) {
+                  done = true;
+                  waiting.delete(url);
+                  return say(`Signed in to ${hostOf(page.url())} with Google${account ? ` (${account})` : ''}. The tab is open on ${where(page.url())}.`);
+                }
+              }
+            }
+          }
+          if (job) { /* Google path: wait for them below */ } else if (!(await visible(page, PASSWORD)) && !(await visible(page, OTP)) && !isSignInPage(start, url)) {
             // Some sites ask for the email first and only then show the password box. If neither
             // is on screen and this isn't a sign-in page, they're already in or it's the wrong page.
             return say(`No sign-in form on ${hostOf(start)}, so they're probably already signed in (or this isn't the sign-in page). Check the page, or call again with the site's sign-in URL. The tab is left open.`);
           }
-          job = { id: await targetIdOf(page), start, since: Date.now(), pm: await tryPasswordManager(page) };
-          waiting.set(url, job);
+          if (!job) {
+            job = { id: await targetIdOf(page), start, since: Date.now(), pm: await tryPasswordManager(page) };
+            waiting.set(url, job);
+          }
           if (job.pm === 'submitted') {
             // Until the page leaves (a new address, or the password box goes), at most 2.5 s, then loaded.
             await firstOf(2500, page.waitForURL((u) => u.href !== start, { timeout: 2500 }),
@@ -191,6 +220,28 @@ export function loginTools({ port, dir, ensureChrome, callBrowser }) {
               done = true;
               waiting.delete(url);
               return say(`Signed in to ${hostOf(page.url())} with the password Chrome had saved. The tab is open on ${where(page.url())}.`);
+            }
+          }
+        }
+
+        // Called again for a Google step that was theirs: they named the account, or said yes to the
+        // access Google asked for. Carry on from Google's page (the popup, or this tab).
+        let front = job.front ? await pageById(b, job.front).catch(() => null) : null;
+        if (!fresh && job.pm === 'google' && (account || approved_access)) {
+          const g0 = front || page;
+          if (onGoogle(g0.url())) {
+            const g = await walkGoogle(g0, { popup: !!front && job.front !== job.id, account, approved: approved_access });
+            if (g.result === 'theirs') job.why = g.why;
+            else {
+              await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+              let twice = await signedIn(page, job.start, url);
+              if (twice) { await page.waitForTimeout(2000); twice = await signedIn(page, job.start, url); }
+              if (twice) {
+                done = true;
+                waiting.delete(url);
+                return say(`Signed in to ${hostOf(page.url())} with Google${account ? ` (${account})` : ''}. The tab is open on ${where(page.url())}.`);
+              }
+              job.pm = 'google-back';
             }
           }
         }
@@ -208,14 +259,15 @@ export function loginTools({ port, dir, ensureChrome, callBrowser }) {
         }
         if (AWAY()) {
           // Nobody is at the computer: don't put the window on screen for no one.
-          return say(`Not signed in to ${hostOf(job.start)}: ${job.pm === 'not-saved' ? 'Chrome has no saved password for it' : job.pm === 'theirs' ? 'that form is theirs to submit' : 'it needs them (maybe 2FA)'}, and nobody is at the computer right now (a scheduled job or a phone session). Stop here and tell them to sign in to ${hostOf(job.start)} in the Stead window when they're back.`);
+          return say(`Not signed in to ${hostOf(job.start)}: ${job.pm === 'not-saved' ? 'Chrome has no saved password for it' : job.pm === 'theirs' ? 'that form is theirs to submit' : job.pm === 'google' ? job.why : 'it needs them (maybe 2FA)'}, and nobody is at the computer right now (a scheduled job or a phone session). Stop here and tell them to sign in to ${hostOf(job.start)} in the Stead window when they're back.`);
         }
 
         // Hand it to the person: window on screen, wait until they're through.
         const host = hostOf(job.start);
         const total = Math.max(Number(wait_minutes) || 5, 0.05) * 60000;
-        await page.bringToFront().catch(() => {});
+        // show() raises the window on whatever tab it had: put the sign-in tab in front after it.
         if (Date.now() < job.since + total) shown = (await show(dir, { port }).catch(() => ({ moved: 0 }))).moved > 0;
+        await (front && !front.isClosed() ? front : page).bringToFront().catch(() => {});
         const until = Math.min(t0 + CALL_BUDGET_MS, job.since + total);
         let streak = 0;
         while (Date.now() < until) {
@@ -232,7 +284,9 @@ export function loginTools({ port, dir, ensureChrome, callBrowser }) {
           ? 'Chrome had no saved password for it, so they need to type it themselves'
           : job.pm === 'theirs'
             ? 'the form\'s button isn\'t a plain sign-in (it may confirm something else), so they need to press it themselves'
-            : 'they haven\'t finished (maybe a 2FA step)';
+            : job.pm === 'google'
+              ? job.why
+              : 'they haven\'t finished (maybe a 2FA step)';
         const mins = Math.round((Date.now() - job.since) / 6000) / 10;
         if (Date.now() >= job.since + total) {
           job.gaveUp = true;
