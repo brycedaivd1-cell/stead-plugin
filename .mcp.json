@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "stead": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server/bin/stead.js",
+        "all"
+      ],
+      "env": {
+        "STEAD_NO_UPDATE": "1"
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "stead",
+  "version": "0.5.8",
+  "description": "Lets Claude do tasks on your own computer: a logged-in Chrome that does not miss clicks, your desktop apps, reminders, and a memory you can read and edit. Asks before paying, sending or deleting.",
+  "author": {
+    "name": "Bryce David"
+  },
+  "homepage": "https://stead.stead-ai.workers.dev",
+  "license": "MIT",
+  "keywords": [
+    "browser",
+    "desktop",
+    "memory",
+    "automation",
+    "chrome"
+  ]
+}
