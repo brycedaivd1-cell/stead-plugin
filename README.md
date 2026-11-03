@@ -82,7 +82,7 @@ Stead does not build a profile from your conversations and does not share or sel
 
 To delete everything: uninstall the plugin, then delete `~/.stead` and `~/.stead-profile`.
 Nothing remains with the author, because nothing was sent. Full policy: [PRIVACY.md](PRIVACY.md).
-Questions: [contact email].
+Questions: bryce_david1@outlook.com.
 
 ## Also in this plugin
 

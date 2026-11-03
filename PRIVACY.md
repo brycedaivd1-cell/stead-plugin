@@ -1,7 +1,5 @@
 # Privacy Policy
 
-> **DRAFT, not yet in force.** Needs review by a lawyer before launch. Bracketed items are blanks.
-
 Version 2026-09-26
 
 ## The short version
@@ -33,8 +31,7 @@ looks like a card number or password.
 - **To websites:** whatever the task needs, just as if you had done it yourself.
 - **To Telegram, if you connect your phone:** the texts and files sent between your phone and your
   bot travel through Telegram, under Telegram's privacy policy.
-- **To us:** nothing, unless you email us. [If payment is added: your payment processor's data,
-  which we don't see in full.]
+- **To us:** nothing, unless you email us.
 
 ## Deleting it
 
@@ -43,8 +40,9 @@ Nothing remains with us, because nothing was sent to us.
 
 ## Children
 
-[Age policy, matching the Terms.]
+Stead is for people 13 and older; under 18 needs a parent's or guardian's permission (Terms,
+section 2). It collects nothing about anyone, of any age: everything stays on the computer it runs on.
 
 ## Contact
 
-[email address]
+bryce_david1@outlook.com
