@@ -182,6 +182,8 @@ export function loginTools({ port, dir, ensureChrome, callBrowser }) {
           if (provider === 'google' || (provider === 'auto' && !boxes)) {
             const g = await signInWithGoogle(page, { account, approved: approved_access });
             if (g.result === 'no-button' && provider === 'google') {
+              // Sent somewhere else with no sign-in on the page: they're already in.
+              if (!isSignInPage(page.url(), url) && !boxes) return say(`No sign-in on ${where(page.url())}: they're probably already signed in to ${hostOf(page.url())}. The tab is left open.`);
               return say(`No "Sign in with Google" button on ${where(start)}. Call again with the site's sign-in page, or with provider "auto". The tab is left open.`);
             }
             if (g.result !== 'no-button') {

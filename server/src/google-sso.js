@@ -24,22 +24,27 @@ const label = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 // A real click, or a DOM click when the window can't render one (hidden on a locked screen).
 const press = (el) => el.click({ timeout: 4000 }).catch(() => el.evaluate((n) => n.click())).catch(() => {});
 
-// The site's Google button, in the page or in Google's own button frame (gsi/button). Visible only.
+// The site's Google button, visible only. Best first: Google's own button frame (gsi/button), then
+// "Sign in with Google" wording, then a button that just says "Google". A link that just says
+// "Google" is never it (menus are full of them).
 export async function findGoogleButton(page) {
-  const frames = page.frames();
-  for (const f of frames) {
+  let best = null, bestScore = 0;
+  for (const f of page.frames()) {
+    const gsi = /\/gsi\/button/.test(f.url());
     let els = [];
     try { els = await f.$$('button, a, [role=button], div[tabindex], input[type=submit], input[type=button]'); } catch { continue; }
-    const gsi = /\/gsi\/button/.test(f.url());
     for (const el of els) {
       try {
         if (!(await el.isVisible())) continue;
-        const name = label(await el.evaluate((n) => n.getAttribute('aria-label') || n.innerText || n.value || n.title || ''));
-        if (GOOGLE_LABEL.test(name) || (gsi && /google/i.test(name))) return el;
+        const [name, tag] = await el.evaluate((n) => [n.getAttribute('aria-label') || n.innerText || n.value || n.title || '', n.tagName]);
+        const t = label(name);
+        const score = gsi && /google/i.test(t) ? 3 : GOOGLE_LABEL.test(t) && !/^google$/i.test(t) ? 2 : /^google$/i.test(t) && tag !== 'A' ? 1 : 0;
+        if (score > bestScore) { best = el; bestScore = score; }
+        if (score === 3) return el;
       } catch { /* detached */ }
     }
   }
-  return null;
+  return best;
 }
 
 // One step on a Google page. Returns 'clicked' (moved it along), 'wait' (loading), or
@@ -94,7 +99,12 @@ async function googleStep(page, account, approved) {
 // is theirs. Returns { result: 'back' } or { result: 'theirs', why, page } (the page to put in
 // front of them) or { result: 'no-button' }.
 export async function signInWithGoogle(page, { account, approved, ms = 25000 } = {}) {
-  const btn = await findGoogleButton(page);
+  // Google's own button (an iframe) loads a moment after the page: look for up to 6 s.
+  let btn = null;
+  for (const end = Date.now() + 6000; !btn && Date.now() < end; ) {
+    btn = await findGoogleButton(page);
+    if (!btn) await new Promise((r) => setTimeout(r, 500));
+  }
   if (!btn) return { result: 'no-button' };
   const ctx = page.context();
   const popupP = ctx.waitForEvent('page', { timeout: 4000 }).catch(() => null);
