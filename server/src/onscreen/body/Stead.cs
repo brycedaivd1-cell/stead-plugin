@@ -2378,6 +2378,21 @@ class Stead : Form {
     } catch { try { File.WriteAllText(statePath, json.Serialize(d)); } catch { } }
   }
 
+  static readonly Queue<DateTime> crashes = new Queue<DateTime>();
+  static void Crashed(string dir, Exception e, bool canGoOn) {
+    try {
+      string log = Path.Combine(dir, "crash.log");
+      if (File.Exists(log) && new FileInfo(log).Length > 200000) File.Delete(log);
+      File.AppendAllText(log, DateTime.Now.ToString("s") + " " + e + Environment.NewLine + Environment.NewLine);
+    } catch { }
+    lock (crashes) {
+      crashes.Enqueue(DateTime.Now);
+      while (crashes.Count > 0 && (DateTime.Now - crashes.Peek()).TotalSeconds > 30) crashes.Dequeue();
+      if (canGoOn && crashes.Count < 50) return;
+    }
+    Environment.Exit(1);
+  }
+
   [STAThread]
   static void Main(string[] args) {
     Native.SetProcessDPIAware();
@@ -2391,6 +2406,12 @@ class Stead : Form {
     using (var mx = new Mutex(true, "Local\\SteadOnscreen", out fresh)) {
       if (!fresh) return;   // one of her is plenty
       Directory.CreateDirectory(dir);
+      // Never Windows' "Unhandled exception... Continue / Quit" box: waking or unlocking the laptop
+      // can leave a window handle stale for a moment ("The handle is invalid"). Log it and carry on;
+      // only a storm of them (broken for real) ends her, and the daemon starts a fresh one.
+      Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+      Application.ThreadException += (s, e) => Crashed(dir, e.Exception, true);
+      AppDomain.CurrentDomain.UnhandledException += (s, e) => Crashed(dir, e.ExceptionObject as Exception, false);
       Application.EnableVisualStyles();
       Application.Run(new Stead(dir, watch));
     }
